@@ -1,3 +1,5 @@
+import { APP_URL } from "./config";
+
 const CONNECTED_KEY = "reqyx.connected";
 
 const statusDot = document.querySelector<HTMLElement>("#status-dot");
@@ -20,7 +22,7 @@ function render(connected: boolean) {
 }
 
 function openWorkspace(kind?: string) {
-  const url = new URL("http://localhost:3000/r/new");
+  const url = new URL(`${APP_URL}/r/new`);
   if (kind && kind !== "http") url.searchParams.set("kind", kind);
   void chrome.tabs.create({ url: url.toString() });
 }
@@ -34,7 +36,7 @@ async function init() {
   }
 
   if (openApp) {
-    openApp.href = "http://localhost:3000/r/new";
+    openApp.href = `${APP_URL}/r/new`;
   }
 
   toggleButton?.addEventListener("click", async () => {

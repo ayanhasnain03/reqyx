@@ -1,3 +1,5 @@
+import { APP_URL } from "./config";
+
 const CONNECTED_KEY = "reqyx.connected";
 
 const statusDot = document.querySelector<HTMLElement>("#panel-dot");
@@ -21,7 +23,7 @@ function render(connected: boolean) {
 }
 
 function openKind(kind: string) {
-  const url = new URL("http://localhost:3000/r/new");
+  const url = new URL(`${APP_URL}/r/new`);
   if (kind !== "http") url.searchParams.set("kind", kind);
   if (frame) frame.src = url.toString();
 }
@@ -32,6 +34,10 @@ async function init() {
   if (versionLabel) {
     versionLabel.textContent = `v${chrome.runtime.getManifest().version}`;
   }
+
+  const panelOpen = document.querySelector<HTMLAnchorElement>("#panel-open");
+  if (panelOpen) panelOpen.href = `${APP_URL}/r/new`;
+  if (frame) frame.src = `${APP_URL}/r/new`;
 
   toggleButton?.addEventListener("click", async () => {
     const next = !(await getConnected());
@@ -52,14 +58,14 @@ async function init() {
   window.setTimeout(() => {
     if (banner && frame) {
       try {
-        void fetch("http://localhost:3000", { mode: "no-cors" }).then(
+        void fetch(APP_URL, { mode: "no-cors" }).then(
           () => {
             banner.dataset.show = "false";
           },
           () => {
             banner.dataset.show = "true";
             banner.textContent =
-              "Start the web app (pnpm --filter web dev) to load the workspace.";
+              "Could not reach the Reqyx web app. Check your connection.";
           },
         );
       } catch {

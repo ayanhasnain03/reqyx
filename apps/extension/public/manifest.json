@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Reqyx",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "HTTP, SSE, and WebSocket testing bridge for Reqyx",
   "icons": {
     "16": "icons/icon16.png",
@@ -23,7 +23,8 @@
     "http://localhost/*",
     "http://127.0.0.1/*",
     "http://[::1]/*",
-    "http://*.localhost/*"
+    "http://*.localhost/*",
+    "https://web-five-self-64.vercel.app/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -35,7 +36,8 @@
         "http://localhost/*",
         "http://127.0.0.1/*",
         "http://[::1]/*",
-        "http://*.localhost/*"
+        "http://*.localhost/*",
+        "https://web-five-self-64.vercel.app/*"
       ],
       "js": ["content.js"],
       "run_at": "document_start"
@@ -47,7 +49,8 @@
       "http://localhost/*",
       "http://127.0.0.1/*",
       "http://[::1]/*",
-      "http://*.localhost/*"
+      "http://*.localhost/*",
+      "https://web-five-self-64.vercel.app/*"
     ]
   }
 }
