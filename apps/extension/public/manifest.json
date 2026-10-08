@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "Reqyx",
+  "version": "0.3.0",
+  "description": "HTTP, SSE, and WebSocket testing bridge for Reqyx",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Reqyx",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "permissions": ["storage", "tabs"],
+  "host_permissions": [
+    "<all_urls>",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "http://[::1]/*",
+    "http://*.localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost/*",
+        "http://127.0.0.1/*",
+        "http://[::1]/*",
+        "http://*.localhost/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "devtools_page": "devtools.html",
+  "externally_connectable": {
+    "matches": [
+      "http://localhost/*",
+      "http://127.0.0.1/*",
+      "http://[::1]/*",
+      "http://*.localhost/*"
+    ]
+  }
+}

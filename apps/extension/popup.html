@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reqyx</title>
+    <link rel="stylesheet" href="./src/popup.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="header">
+        <div class="brand">
+          <span class="mark" aria-hidden="true"></span>
+          <div>
+            <p class="title">Reqyx</p>
+            <p class="subtitle" id="version">v0.3.0</p>
+          </div>
+        </div>
+        <div class="status">
+          <span class="dot" id="status-dot" data-state="connected"></span>
+          <span id="status-label">Connected</span>
+        </div>
+      </header>
+
+      <section class="card">
+        <p class="card-title">Bridge</p>
+        <p class="card-copy">
+          Route HTTP, SSE, and WebSocket traffic through the extension for any
+          host, including localhost.
+        </p>
+        <button type="button" class="toggle" id="toggle" data-mode="disconnect">
+          Disconnect
+        </button>
+      </section>
+
+      <section class="grid">
+        <button type="button" class="tile" id="open-http" data-kind="http">
+          <span class="tile-label">HTTP</span>
+          <span class="tile-meta">New request</span>
+        </button>
+        <button type="button" class="tile" id="open-sse" data-kind="sse">
+          <span class="tile-label">SSE</span>
+          <span class="tile-meta">Stream test</span>
+        </button>
+        <button type="button" class="tile" id="open-ws" data-kind="websocket">
+          <span class="tile-label">WebSocket</span>
+          <span class="tile-meta">New connection</span>
+        </button>
+        <button type="button" class="tile" id="open-panel">
+          <span class="tile-label">Panel</span>
+          <span class="tile-meta">DevTools</span>
+        </button>
+      </section>
+
+      <footer class="footer">
+        <a id="open-app" href="http://localhost:3000/r/new" target="_blank" rel="noreferrer">
+          Open workspace
+        </a>
+        <span class="sep" aria-hidden="true">/</span>
+        <span class="hint">MV3 bridge</span>
+      </footer>
+    </main>
+    <script type="module" src="./src/popup.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Reqyx</title>
+    <link rel="stylesheet" href="./src/panel.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="rail">
+        <div class="brand">
+          <span class="mark"></span>
+          <div>
+            <p class="title">Reqyx</p>
+            <p class="meta" id="panel-version">v0.3.0</p>
+          </div>
+        </div>
+        <div class="pill" id="panel-status">
+          <span class="dot" id="panel-dot" data-state="connected"></span>
+          <span id="panel-label">Connected</span>
+        </div>
+        <button type="button" class="btn" id="panel-toggle">Disconnect</button>
+        <div class="actions">
+          <button type="button" class="ghost" data-kind="http">HTTP</button>
+          <button type="button" class="ghost" data-kind="sse">SSE</button>
+          <button type="button" class="ghost" data-kind="websocket">WebSocket</button>
+        </div>
+        <a class="link" id="panel-open" href="http://localhost:3000/r/new" target="_blank" rel="noreferrer">
+          Open full workspace
+        </a>
+      </aside>
+      <section class="stage">
+        <div class="banner" id="banner">
+          Waiting for workspace at localhost:3000
+        </div>
+        <iframe
+          id="workspace"
+          src="http://localhost:3000/r/new"
+          title="Reqyx workspace"
+          allow="clipboard-read; clipboard-write"
+        ></iframe>
+      </section>
+    </div>
+    <script type="module" src="./src/panel.ts"></script>
+  </body>
+</html>
