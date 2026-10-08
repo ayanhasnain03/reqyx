@@ -23,7 +23,7 @@ import {
   type ExtensionState,
 } from "./bridge";
 
-export type Transport = "extension" | "browser";
+export type Transport = "extension" | "browser" | "proxy";
 
 export type TransportInfo = {
   transport: Transport;
@@ -64,9 +64,10 @@ export function buildExecutePayload(
   };
 
   const authed = applyAuth(resolvedAuth, resolvedHeaders, resolvedParams);
-  const formRows = draft.bodyMode === "urlencoded" || draft.bodyMode === "formdata"
-    ? resolvedParams
-    : [];
+  const formRows =
+    draft.bodyMode === "urlencoded" || draft.bodyMode === "formdata"
+      ? resolvedParams
+      : [];
   const built = buildRequestBody(
     draft.bodyMode,
     resolveVariables(draft.body, variables),
@@ -80,6 +81,52 @@ export function buildExecutePayload(
     headers,
     body: built.body,
   };
+}
+
+function looksLikeCorsOrNetworkFailure(result: HttpResult): boolean {
+  if (result.ok) return false;
+  const message = result.error.toLowerCase();
+  return (
+    message.includes("failed to fetch") ||
+    message.includes("networkerror") ||
+    message.includes("load failed") ||
+    message.includes("network request failed") ||
+    message.includes("cors")
+  );
+}
+
+async function executeViaProxy(
+  payload: ExecutePayload,
+  signal?: AbortSignal,
+): Promise<HttpResult | null> {
+  try {
+    const response = await fetch("/api/proxy", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal,
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      let message = text || `Proxy failed (${response.status})`;
+      try {
+        const json = JSON.parse(text) as { error?: string };
+        if (json.error) message = json.error;
+      } catch {
+        /* keep text */
+      }
+      return { ok: false, error: message, timeMs: 0 };
+    }
+
+    return (await response.json()) as HttpResult;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return { ok: false, error: "Request aborted", timeMs: 0 };
+    }
+    return null;
+  }
 }
 
 export async function sendRequest(
@@ -101,36 +148,43 @@ export async function sendRequest(
     }
   }
 
-  if (local) {
-    if (!extension.installed) {
-      return {
-        result: {
-          ok: false,
-          error:
-            "Localhost requests need the Reqyx extension. Load apps/extension/dist in chrome://extensions, then reload this page.",
-          timeMs: 0,
-        },
-        transport: "browser",
-      };
-    }
-
-    if (!extension.connected) {
-      return {
-        result: {
-          ok: false,
-          error:
-            "Extension is disconnected. Connect it from the header or the extension popup, then try again.",
-          timeMs: 0,
-        },
-        transport: "browser",
-      };
-    }
+  const browserResult = await executeRequest(payload, signal);
+  if (browserResult.ok || !local || !looksLikeCorsOrNetworkFailure(browserResult)) {
+    return { result: browserResult, transport: "browser" };
   }
 
-  return {
-    result: await executeRequest(payload, signal),
-    transport: "browser",
-  };
+  const proxyResult = await executeViaProxy(payload, signal);
+  if (proxyResult) {
+    return { result: proxyResult, transport: "proxy" };
+  }
+
+  if (!extension.installed) {
+    return {
+      result: {
+        ok: false,
+        error:
+          browserResult.ok === false
+            ? `${browserResult.error}. For localhost APIs without CORS, install the Reqyx extension (apps/extension/dist) or keep the Next.js server on the same machine.`
+            : "Localhost request failed. Install the Reqyx extension or use the server proxy.",
+        timeMs: browserResult.ok === false ? browserResult.timeMs : 0,
+      },
+      transport: "browser",
+    };
+  }
+
+  if (!extension.connected) {
+    return {
+      result: {
+        ok: false,
+        error:
+          "Could not reach localhost. Connect the Reqyx extension from the header, then try again.",
+        timeMs: 0,
+      },
+      transport: "browser",
+    };
+  }
+
+  return { result: browserResult, transport: "browser" };
 }
 
 export async function startSseSession(
@@ -174,9 +228,7 @@ export function startWsSession(
   preferred: Transport,
   onMessage: (message: WsMessage) => void,
 ): { send: (data: string) => void; close: () => void; transport: Transport } {
-  const local = url.startsWith("ws://localhost") || url.startsWith("ws://127.0.0.1");
-
-  if (preferred === "extension" || local) {
+  if (preferred === "extension") {
     const handle = connectWsViaExtension(url, onMessage);
     return {
       send: handle.send,

@@ -1127,10 +1127,15 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
                   variant="secondary"
                   className={cn(
                     "rounded-md font-mono uppercase",
-                    transport === "extension" && "bg-brand-muted text-brand",
+                    (transport === "extension" || transport === "proxy") &&
+                      "bg-brand-muted text-brand",
                   )}
                 >
-                  {transport === "extension" ? "Extension" : "Browser"}
+                  {transport === "extension"
+                    ? "Extension"
+                    : transport === "proxy"
+                      ? "Proxy"
+                      : "Browser"}
                 </Badge>
                 <Button
                   variant="outline"
