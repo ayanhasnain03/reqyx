@@ -3,7 +3,7 @@ import { getSessionCookie } from "better-auth/cookies";
 
 const AUTH_PAGES = new Set(["/login", "/signup"]);
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const sessionCookie = getSessionCookie(request);
 
@@ -28,10 +28,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: [
-    "/",
-    "/login",
-    "/signup",
-    "/r/:path*",
-  ],
+  matcher: ["/", "/login", "/signup", "/r/:path*"],
 };
