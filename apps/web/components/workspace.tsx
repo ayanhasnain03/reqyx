@@ -762,9 +762,31 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
       setResult(next);
 
       if (settings.saveCookies && next.ok) {
-        const captured = extractCookiesFromHeaders(next.headers, executePayload.url);
+        const captured = extractCookiesFromHeaders(
+          next.headers,
+          executePayload.url,
+        );
         if (captured.length > 0) {
           updateCookieJar(mergeCookieJar(cookieJar, captured));
+          toast.success(
+            `Saved ${captured.length} cookie${captured.length === 1 ? "" : "s"}`,
+          );
+        } else if (used === "browser") {
+          toast.message(
+            "Browser hides Set-Cookie. Keep Save cookies on so requests use Proxy.",
+          );
+        } else if (
+          /"accessToken"\s*:/.test(next.body) ||
+          /"access_token"\s*:/.test(next.body)
+        ) {
+          const hasSetCookie = next.headers.some(
+            (header) => header.key.toLowerCase() === "set-cookie",
+          );
+          if (!hasSetCookie) {
+            toast.message(
+              "Got accessToken in JSON, but no Set-Cookie (session cookie missing from response headers).",
+            );
+          }
         }
       }
 
@@ -1015,7 +1037,7 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <Label htmlFor="save-cookies" className="text-xs font-normal">
-                      Save cookies
+                      Save cookies (Set-Cookie)
                     </Label>
                     <Switch
                       id="save-cookies"
@@ -1616,7 +1638,19 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
                     value="cookies"
                     className="mt-0 min-h-0 flex-1 overflow-auto p-4 outline-none"
                   >
-                    <CookieJar cookies={cookieJar} onChange={updateCookieJar} />
+                    <CookieJar
+                      cookies={cookieJar}
+                      onChange={updateCookieJar}
+                      defaultDomain={(() => {
+                        try {
+                          return new URL(
+                            executePayload.url || draft.url,
+                          ).hostname;
+                        } catch {
+                          return "";
+                        }
+                      })()}
+                    />
                   </TabsContent>
                   <TabsContent
                     value="code"

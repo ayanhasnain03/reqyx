@@ -9,6 +9,7 @@ import {
 import { auth } from "@/server/auth";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 function isKeyValue(value: unknown): value is KeyValue {
   if (!value || typeof value !== "object") return false;
@@ -21,12 +22,47 @@ function isKeyValue(value: unknown): value is KeyValue {
   );
 }
 
-function isAllowedProxyUrl(input: string): boolean {
+function isBlockedProxyHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (
+    host === "localhost" ||
+    host === "0.0.0.0" ||
+    host.endsWith(".localhost") ||
+    host === "::1"
+  ) {
+    // Allow loopback outside production (local mock + cookie tests).
+    return process.env.NODE_ENV === "production";
+  }
+
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+    const parts = host.split(".").map(Number);
+    const [a, b] = parts;
+    if (a === undefined || b === undefined) return true;
+    if (a === 10 || a === 127 || a === 0) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+  }
+
+  if (host === "metadata.google.internal") return true;
+  return false;
+}
+
+function isAllowedProxyUrl(
+  input: string,
+): { ok: true } | { ok: false; error: string } {
   try {
     const url = new URL(input);
-    return url.protocol === "http:" || url.protocol === "https:";
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return { ok: false, error: "Proxy only allows http/https URLs" };
+    }
+    if (isBlockedProxyHost(url.hostname)) {
+      return { ok: false, error: "Proxy blocks private / reserved hosts" };
+    }
+    return { ok: true };
   } catch {
-    return false;
+    return { ok: false, error: "Invalid URL" };
   }
 }
 
@@ -71,11 +107,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request payload" }, { status: 400 });
   }
 
-  if (!isAllowedProxyUrl(payload.url)) {
-    return NextResponse.json(
-      { error: "Proxy only allows http/https URLs" },
-      { status: 400 },
-    );
+  const allowed = isAllowedProxyUrl(payload.url);
+  if (!allowed.ok) {
+    return NextResponse.json({ error: allowed.error }, { status: 400 });
   }
 
   const result = await executeRequest(payload);

@@ -8,7 +8,11 @@ export function loadCookieJar(): StoredCookie[] {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as StoredCookie[];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((cookie) => ({
+      ...cookie,
+      hostOnly: cookie.hostOnly ?? true,
+    }));
   } catch {
     return [];
   }

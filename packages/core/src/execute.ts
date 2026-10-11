@@ -11,6 +11,35 @@ function enabledHeaders(headers: KeyValue[]): Headers {
   return out;
 }
 
+function collectSetCookieHeaders(response: Response): string[] {
+  const headers = response.headers as Headers & {
+    getSetCookie?: () => string[];
+    raw?: () => Record<string, string | string[]>;
+  };
+
+  if (typeof headers.getSetCookie === "function") {
+    const list = headers.getSetCookie.call(headers);
+    if (Array.isArray(list) && list.length > 0) {
+      return list.filter((value): value is string => Boolean(value));
+    }
+  }
+
+  // node-fetch style raw()
+  if (typeof headers.raw === "function") {
+    const raw = headers.raw();
+    const fromRaw = raw["set-cookie"] ?? raw["Set-Cookie"];
+    if (Array.isArray(fromRaw)) {
+      return fromRaw.filter(Boolean);
+    }
+    if (typeof fromRaw === "string" && fromRaw) {
+      return [fromRaw];
+    }
+  }
+
+  const single = response.headers.get("set-cookie");
+  return single ? [single] : [];
+}
+
 export async function executeRequest(
   payload: ExecutePayload,
   signal?: AbortSignal,
@@ -41,17 +70,8 @@ export async function executeRequest(
     const response = await fetch(url, init);
     const body = await response.text();
     const headers: KeyValue[] = [];
-    const getSetCookie = (
-      response.headers as Headers & { getSetCookie?: () => string[] }
-    ).getSetCookie;
 
-    // Prefer getSetCookie — forEach/get hide or join Set-Cookie incorrectly.
-    const setCookies =
-      typeof getSetCookie === "function"
-        ? getSetCookie.call(response.headers)
-        : [];
-    for (const [index, value] of setCookies.entries()) {
-      if (!value) continue;
+    for (const [index, value] of collectSetCookieHeaders(response).entries()) {
       headers.push({
         id: `set-cookie-${index}`,
         key: "set-cookie",

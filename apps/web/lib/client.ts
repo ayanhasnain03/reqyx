@@ -144,7 +144,7 @@ export async function sendRequest(
   const local = isLocalHostUrl(payload.url);
   const extension = await detectExtension();
 
-  // Browser + extension fetch often hide Set-Cookie. Prefer Node proxy first.
+  // Browser fetch cannot read Set-Cookie (Postman-style jar needs proxy/extension).
   if (captureCookies) {
     const proxyResult = await executeViaProxy(payload, signal);
     if (proxyResult?.ok) {
@@ -158,6 +158,7 @@ export async function sendRequest(
       }
     }
 
+    // Last resort: response body may work; Set-Cookie usually will not.
     const browserResult = await executeRequest(payload, signal);
     return { result: browserResult, transport: "browser" };
   }
