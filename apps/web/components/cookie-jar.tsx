@@ -32,6 +32,8 @@ export function CookieJar({ cookies, onChange }: Props) {
           <EmptyTitle>No cookies saved</EmptyTitle>
           <EmptyDescription>
             Enable Save cookies, then send a request that returns Set-Cookie.
+            Requests go through the extension or server proxy so Set-Cookie can
+            be read.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>

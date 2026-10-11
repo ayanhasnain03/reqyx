@@ -10,6 +10,8 @@ import {
   type BridgeSseEvent,
   type BridgeStatus,
   type BridgeWsMessage,
+  type ExecutePayload,
+  type HttpResult,
   type KeyValue,
 } from "@repo/core";
 
@@ -20,6 +22,69 @@ const sockets = new Map<string, WebSocket>();
 async function getConnected(): Promise<boolean> {
   const stored = await chrome.storage.local.get(CONNECTED_KEY);
   return stored[CONNECTED_KEY] !== false;
+}
+
+/** Fetch hides Set-Cookie; capture via webRequest (extraHeaders). */
+async function executeWithSetCookie(
+  payload: ExecutePayload,
+): Promise<HttpResult> {
+  const setCookies: string[] = [];
+  let targetHref = payload.url.trim();
+  try {
+    targetHref = new URL(payload.url.trim()).href;
+  } catch {
+    /* keep raw */
+  }
+
+  const listener: Parameters<
+    typeof chrome.webRequest.onHeadersReceived.addListener
+  >[0] = (details) => {
+    let detailHref = details.url;
+    try {
+      detailHref = new URL(details.url).href;
+    } catch {
+      /* keep raw */
+    }
+    if (detailHref !== targetHref) return;
+    for (const header of details.responseHeaders ?? []) {
+      if (header.name.toLowerCase() === "set-cookie" && header.value) {
+        setCookies.push(header.value);
+      }
+    }
+  };
+
+  try {
+    chrome.webRequest.onHeadersReceived.addListener(
+      listener,
+      { urls: ["<all_urls>"] },
+      ["responseHeaders", "extraHeaders"],
+    );
+  } catch {
+    return executeRequest(payload);
+  }
+
+  try {
+    const result = await executeRequest(payload);
+    if (!result.ok || setCookies.length === 0) return result;
+
+    const withoutSetCookie = result.headers.filter(
+      (header) => header.key.toLowerCase() !== "set-cookie",
+    );
+    return {
+      ...result,
+      headers: [
+        ...setCookies.map((value, index) => ({
+          id: `set-cookie-${index}`,
+          key: "set-cookie",
+          value,
+          enabled: true,
+        })),
+        ...withoutSetCookie,
+      ],
+    };
+  } finally {
+    chrome.webRequest.onHeadersReceived.removeListener(listener);
+  }
 }
 
 async function setConnected(connected: boolean): Promise<boolean> {
@@ -101,7 +166,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
 
-      const result = await executeRequest(message.payload);
+      const result = await executeWithSetCookie(message.payload);
       const response: BridgeExecuteResult = {
         source: BRIDGE_SOURCE,
         type: "EXECUTE_RESULT",

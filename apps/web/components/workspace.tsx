@@ -753,7 +753,10 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
       const { result: next, transport: used } = await sendRequest(
         executePayload,
         transport,
-        controller.signal,
+        {
+          signal: controller.signal,
+          captureCookies: settings.saveCookies,
+        },
       );
       setTransport(used);
       setResult(next);

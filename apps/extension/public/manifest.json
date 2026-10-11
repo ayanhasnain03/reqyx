@@ -17,7 +17,7 @@
       "128": "icons/icon128.png"
     }
   },
-  "permissions": ["storage", "tabs"],
+  "permissions": ["storage", "tabs", "webRequest"],
   "host_permissions": [
     "<all_urls>",
     "http://localhost/*",

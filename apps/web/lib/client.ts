@@ -129,13 +129,39 @@ async function executeViaProxy(
   }
 }
 
+export type SendRequestOptions = {
+  signal?: AbortSignal;
+  /** Browser fetch cannot read Set-Cookie; prefer extension/proxy when true. */
+  captureCookies?: boolean;
+};
+
 export async function sendRequest(
   payload: ExecutePayload,
   preferred: Transport,
-  signal?: AbortSignal,
+  options: SendRequestOptions = {},
 ): Promise<{ result: HttpResult; transport: Transport }> {
+  const { signal, captureCookies = false } = options;
   const local = isLocalHostUrl(payload.url);
   const extension = await detectExtension();
+
+  // Browser + extension fetch often hide Set-Cookie. Prefer Node proxy first.
+  if (captureCookies) {
+    const proxyResult = await executeViaProxy(payload, signal);
+    if (proxyResult?.ok) {
+      return { result: proxyResult, transport: "proxy" };
+    }
+
+    if (extension.installed && extension.connected) {
+      const viaExtension = await executeViaExtension(payload);
+      if (viaExtension?.ok) {
+        return { result: viaExtension, transport: "extension" };
+      }
+    }
+
+    const browserResult = await executeRequest(payload, signal);
+    return { result: browserResult, transport: "browser" };
+  }
+
   const wantExtension =
     (preferred === "extension" || local) &&
     extension.installed &&
@@ -149,7 +175,11 @@ export async function sendRequest(
   }
 
   const browserResult = await executeRequest(payload, signal);
-  if (browserResult.ok || !local || !looksLikeCorsOrNetworkFailure(browserResult)) {
+  if (
+    browserResult.ok ||
+    !local ||
+    !looksLikeCorsOrNetworkFailure(browserResult)
+  ) {
     return { result: browserResult, transport: "browser" };
   }
 

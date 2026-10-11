@@ -45,16 +45,19 @@ export async function executeRequest(
       response.headers as Headers & { getSetCookie?: () => string[] }
     ).getSetCookie;
 
-    if (typeof getSetCookie === "function") {
-      const setCookies = getSetCookie.call(response.headers);
-      for (const [index, value] of setCookies.entries()) {
-        headers.push({
-          id: `set-cookie-${index}`,
-          key: "set-cookie",
-          value,
-          enabled: true,
-        });
-      }
+    // Prefer getSetCookie — forEach/get hide or join Set-Cookie incorrectly.
+    const setCookies =
+      typeof getSetCookie === "function"
+        ? getSetCookie.call(response.headers)
+        : [];
+    for (const [index, value] of setCookies.entries()) {
+      if (!value) continue;
+      headers.push({
+        id: `set-cookie-${index}`,
+        key: "set-cookie",
+        value,
+        enabled: true,
+      });
     }
 
     response.headers.forEach((value, key) => {

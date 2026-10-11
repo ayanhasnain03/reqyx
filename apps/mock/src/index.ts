@@ -1,5 +1,6 @@
 import { serve, upgradeWebSocket } from "@hono/node-server";
 import { Hono } from "hono";
+import { setCookie } from "hono/cookie";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { WebSocketServer } from "ws";
@@ -108,6 +109,23 @@ app.get("/delay/:ms", async (c) => {
 });
 
 app.get("/headers", (c) => c.json({ headers: headersObject(c) }));
+
+app.get("/cookies/set", (c) => {
+  const name = c.req.query("name") || "reqyx_session";
+  const value = c.req.query("value") || crypto.randomUUID();
+  const maxAge = Number(c.req.query("maxAge") ?? 3600);
+  setCookie(c, name, value, {
+    path: "/",
+    httpOnly: true,
+    maxAge: Number.isFinite(maxAge) ? maxAge : 3600,
+  });
+  return c.json({ ok: true, name, value });
+});
+
+app.get("/cookies/echo", (c) => {
+  const cookie = c.req.header("cookie") ?? "";
+  return c.json({ cookie });
+});
 
 app.get("/query", (c) => c.json({ query: c.req.query() }));
 

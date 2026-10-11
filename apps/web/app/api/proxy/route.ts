@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import {
   HTTP_METHODS,
   executeRequest,
-  isLocalHostUrl,
   type ExecutePayload,
   type HttpMethod,
   type KeyValue,
@@ -20,6 +19,15 @@ function isKeyValue(value: unknown): value is KeyValue {
     typeof row.value === "string" &&
     typeof row.enabled === "boolean"
   );
+}
+
+function isAllowedProxyUrl(input: string): boolean {
+  try {
+    const url = new URL(input);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function parsePayload(body: unknown): ExecutePayload | null {
@@ -63,9 +71,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request payload" }, { status: 400 });
   }
 
-  if (!isLocalHostUrl(payload.url)) {
+  if (!isAllowedProxyUrl(payload.url)) {
     return NextResponse.json(
-      { error: "Proxy only allows localhost / loopback targets" },
+      { error: "Proxy only allows http/https URLs" },
       { status: 400 },
     );
   }
