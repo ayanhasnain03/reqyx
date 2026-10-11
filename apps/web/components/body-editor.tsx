@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, type KeyboardEvent } from "react";
 import { detectBodyKind, formatJsonBody } from "@repo/core";
 import { Badge } from "@repo/ui/components/badge";
 import { ButtonGroup } from "@repo/ui/components/button-group";
@@ -29,6 +29,28 @@ type Props = {
   onChange: (value: string) => void;
 };
 
+const PAIRS: Record<string, string> = {
+  "{": "}",
+  "[": "]",
+  "(": ")",
+  '"': '"',
+  "'": "'",
+  "`": "`",
+};
+
+const CLOSERS = new Set(Object.values(PAIRS));
+
+function setSelection(
+  el: HTMLTextAreaElement,
+  start: number,
+  end: number = start,
+) {
+  requestAnimationFrame(() => {
+    el.selectionStart = start;
+    el.selectionEnd = end;
+  });
+}
+
 export function BodyEditor({ value, onChange }: Props) {
   const kind = useMemo(() => detectBodyKind(value), [value]);
   const canFormat = kind === "json";
@@ -43,7 +65,46 @@ export function BodyEditor({ value, onChange }: Props) {
     try {
       onChange(JSON.stringify(JSON.parse(value)));
     } catch {
-      
+      /* ignore invalid json */
+    }
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+    const el = event.currentTarget;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const selected = value.slice(start, end);
+
+    if (event.key === "Backspace" && start === end && start > 0) {
+      const open = value[start - 1];
+      const close = value[start];
+      if (open && PAIRS[open] === close) {
+        event.preventDefault();
+        onChange(value.slice(0, start - 1) + value.slice(start + 1));
+        setSelection(el, start - 1);
+      }
+      return;
+    }
+
+    if (CLOSERS.has(event.key) && start === end && value[start] === event.key) {
+      event.preventDefault();
+      setSelection(el, start + 1);
+      return;
+    }
+
+    const closer = PAIRS[event.key];
+    if (!closer) return;
+
+    event.preventDefault();
+    const next =
+      value.slice(0, start) + event.key + selected + closer + value.slice(end);
+    onChange(next);
+    if (selected) {
+      setSelection(el, start + 1, end + 1);
+    } else {
+      setSelection(el, start + 1);
     }
   }
 
@@ -57,6 +118,7 @@ export function BodyEditor({ value, onChange }: Props) {
           <InputGroupTextarea
             value={value}
             onChange={(event) => onChange(event.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder={'{\n  "example": true\n}'}
             spellCheck={false}
             aria-invalid={invalid || undefined}

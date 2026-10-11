@@ -7,6 +7,7 @@ const defaults = {
   autoSaveHistory: false,
   saveRequestBody: true,
   saveResponseMeta: true,
+  saveCookies: true,
   activeEnvironmentId: null as string | null,
 };
 
@@ -26,6 +27,7 @@ export const settingsRouter = createTRPCRouter({
       autoSaveHistory: row.autoSaveHistory,
       saveRequestBody: row.saveRequestBody,
       saveResponseMeta: row.saveResponseMeta,
+      saveCookies: row.saveCookies,
       activeEnvironmentId: row.activeEnvironmentId,
     };
   }),
@@ -36,6 +38,7 @@ export const settingsRouter = createTRPCRouter({
         autoSaveHistory: z.boolean().optional(),
         saveRequestBody: z.boolean().optional(),
         saveResponseMeta: z.boolean().optional(),
+        saveCookies: z.boolean().optional(),
         activeEnvironmentId: z.string().nullable().optional(),
       }),
     )
@@ -59,6 +62,8 @@ export const settingsRouter = createTRPCRouter({
           input.saveResponseMeta ??
           existing?.saveResponseMeta ??
           defaults.saveResponseMeta,
+        saveCookies:
+          input.saveCookies ?? existing?.saveCookies ?? defaults.saveCookies,
         activeEnvironmentId:
           input.activeEnvironmentId !== undefined
             ? input.activeEnvironmentId
@@ -81,6 +86,7 @@ export const settingsRouter = createTRPCRouter({
         autoSaveHistory: next.autoSaveHistory,
         saveRequestBody: next.saveRequestBody,
         saveResponseMeta: next.saveResponseMeta,
+        saveCookies: next.saveCookies,
         activeEnvironmentId: next.activeEnvironmentId,
       };
     }),

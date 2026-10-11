@@ -49,14 +49,14 @@ type Props = {
 export function ResponseView({ result, loading }: Props) {
   if (loading) {
     return (
-      <div className="flex h-full flex-col gap-3 p-4">
+      <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden p-4">
         <div className="flex items-center gap-2">
           <Spinner />
           <p className="text-sm text-muted-foreground">Sending request…</p>
         </div>
         <Skeleton className="h-5 w-28" />
         <Skeleton className="h-5 w-40" />
-        <Skeleton className="min-h-0 flex-1 w-full" />
+        <Skeleton className="min-h-0 w-full flex-1" />
       </div>
     );
   }
@@ -79,18 +79,22 @@ export function ResponseView({ result, loading }: Props) {
 
   if (!result.ok) {
     return (
-      <div className="flex h-full flex-col gap-3 p-4">
-        <Alert variant="destructive">
-          <AlertCircleIcon />
-          <AlertTitle>Request failed</AlertTitle>
-          <AlertDescription>
-            <p className="font-mono text-sm text-pretty">{result.error}</p>
-          </AlertDescription>
-        </Alert>
-        <p className="font-mono text-xs text-muted-foreground tabular-nums">
-          {formatDuration(result.timeMs)}
-        </p>
-      </div>
+      <ScrollArea className="h-full">
+        <div className="flex flex-col gap-3 p-4">
+          <Alert variant="destructive">
+            <AlertCircleIcon />
+            <AlertTitle>Request failed</AlertTitle>
+            <AlertDescription>
+              <p className="font-mono text-sm text-pretty break-all">
+                {result.error}
+              </p>
+            </AlertDescription>
+          </Alert>
+          <p className="font-mono text-xs text-muted-foreground tabular-nums">
+            {formatDuration(result.timeMs)}
+          </p>
+        </div>
+      </ScrollArea>
     );
   }
 
@@ -98,8 +102,8 @@ export function ResponseView({ result, loading }: Props) {
   const headers = result.headers.filter((header) => header.key);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap items-center gap-2 px-4 py-2.5">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 py-2.5">
         <Badge
           variant={band === "unknown" ? "secondary" : "outline"}
           className={cn("rounded-md font-mono tabular-nums", bandClass[band])}
@@ -113,9 +117,12 @@ export function ResponseView({ result, loading }: Props) {
           {formatBytes(result.size)}
         </Badge>
       </div>
-      <Separator />
-      <Tabs defaultValue="body" className="flex min-h-0 flex-1 gap-0">
-        <div className="flex items-center justify-between gap-2 px-3 py-2">
+      <Separator className="shrink-0" />
+      <Tabs
+        defaultValue="body"
+        className="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden"
+      >
+        <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
           <TabsList>
             <TabsTrigger value="body">Body</TabsTrigger>
             <TabsTrigger value="headers">
@@ -131,13 +138,16 @@ export function ResponseView({ result, loading }: Props) {
             </TabsTrigger>
           </TabsList>
         </div>
-        <Separator />
-        <TabsContent value="body" className="mt-0 min-h-0 flex-1 outline-none">
-          <JsonViewer body={result.body} />
+        <Separator className="shrink-0" />
+        <TabsContent
+          value="body"
+          className="mt-0 min-h-0 flex-1 overflow-hidden data-[state=inactive]:hidden"
+        >
+          <JsonViewer body={result.body} className="h-full" />
         </TabsContent>
         <TabsContent
           value="headers"
-          className="mt-0 min-h-0 flex-1 outline-none"
+          className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
         >
           {headers.length === 0 ? (
             <Empty className="h-full border-0">
@@ -149,8 +159,8 @@ export function ResponseView({ result, loading }: Props) {
               </EmptyHeader>
             </Empty>
           ) : (
-            <div className="flex h-full min-h-0 flex-col">
-              <div className="flex justify-end px-4 py-2">
+            <>
+              <div className="flex shrink-0 justify-end px-4 py-2">
                 <CopyButton
                   value={headers
                     .map((header) => `${header.key}: ${header.value}`)
@@ -170,10 +180,10 @@ export function ResponseView({ result, loading }: Props) {
                     <TableBody>
                       {headers.map((header) => (
                         <TableRow key={header.id}>
-                          <TableCell className="font-mono text-xs text-json-key">
+                          <TableCell className="max-w-0 break-all font-mono text-xs text-json-key">
                             {header.key}
                           </TableCell>
-                          <TableCell className="break-all font-mono text-xs">
+                          <TableCell className="max-w-0 break-all font-mono text-xs">
                             {header.value}
                           </TableCell>
                         </TableRow>
@@ -182,7 +192,7 @@ export function ResponseView({ result, loading }: Props) {
                   </Table>
                 </div>
               </ScrollArea>
-            </div>
+            </>
           )}
         </TabsContent>
       </Tabs>

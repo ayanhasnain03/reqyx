@@ -41,7 +41,24 @@ export async function executeRequest(
     const response = await fetch(url, init);
     const body = await response.text();
     const headers: KeyValue[] = [];
+    const getSetCookie = (
+      response.headers as Headers & { getSetCookie?: () => string[] }
+    ).getSetCookie;
+
+    if (typeof getSetCookie === "function") {
+      const setCookies = getSetCookie.call(response.headers);
+      for (const [index, value] of setCookies.entries()) {
+        headers.push({
+          id: `set-cookie-${index}`,
+          key: "set-cookie",
+          value,
+          enabled: true,
+        });
+      }
+    }
+
     response.headers.forEach((value, key) => {
+      if (key.toLowerCase() === "set-cookie") return;
       headers.push({
         id: key,
         key,

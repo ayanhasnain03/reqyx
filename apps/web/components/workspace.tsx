@@ -15,6 +15,11 @@ import {
   DropdownMenuTrigger,
 } from "@repo/ui/components/dropdown-menu";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@repo/ui/components/popover";
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
@@ -55,10 +60,19 @@ import { Spinner } from "@repo/ui/components/spinner";
 import { Switch } from "@repo/ui/components/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/components/tabs";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@repo/ui/components/tooltip";
+import {
   HTTP_METHODS,
   activeVariables,
+  applyCookieHeader,
+  cookiesForUrl,
   createId,
   emptyKeyValue,
+  extractCookiesFromHeaders,
+  mergeCookieJar,
   type Collection,
   type Environment,
   type HttpMethod,
@@ -66,12 +80,19 @@ import {
   type RequestDraft,
   type RequestKind,
   type SseEvent,
+  type StoredCookie,
   type WsMessage,
 } from "@repo/core";
 import { toast } from "sonner";
 import {
   CableIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  ClockIcon,
+  FolderIcon,
   LogOutIcon,
+  PanelLeftCloseIcon,
+  PanelLeftIcon,
   PlusIcon,
   RadioIcon,
   SaveIcon,
@@ -100,6 +121,7 @@ import {
   renameCollectionItem,
   upsertCollectionRequest,
 } from "@/lib/collections";
+import { loadCookieJar, saveCookieJar } from "@/lib/cookies";
 import { createDraft, draftFromKind } from "@/lib/draft";
 import { defaultSettings, type LocalSettings } from "@/lib/history";
 import { signOut, useSession } from "@/lib/auth-client";
@@ -108,6 +130,7 @@ import { AuthEditor } from "@/components/auth-editor";
 import { BodyEditor } from "@/components/body-editor";
 import { CodeGen } from "@/components/code-gen";
 import { CollectionTree } from "@/components/collection-tree";
+import { CookieJar } from "@/components/cookie-jar";
 import { KeyValueEditor } from "@/components/key-value-editor";
 import { ResponseView } from "@/components/response-view";
 import { SseView } from "@/components/sse-view";
@@ -128,7 +151,8 @@ function draftFingerprint(draft: RequestDraft): string {
   });
 }
 
-type EditorTab = "params" | "headers" | "body" | "auth" | "code";
+type EditorTab = "params" | "headers" | "body" | "auth" | "cookies" | "code";
+type SidebarTab = "collections" | "history";
 
 type ExtensionInfo = {
   installed: boolean;
@@ -165,6 +189,9 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [activeEnvId, setActiveEnvId] = useState<string | null>(null);
   const [tab, setTab] = useState<EditorTab>("params");
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("collections");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [cookieJar, setCookieJar] = useState<StoredCookie[]>([]);
   const [transport, setTransport] = useState<Transport>("browser");
   const [extension, setExtension] = useState<ExtensionInfo>({
     installed: false,
@@ -241,6 +268,7 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
           autoSaveHistory: next.autoSaveHistory,
           saveRequestBody: next.saveRequestBody,
           saveResponseMeta: next.saveResponseMeta,
+          saveCookies: next.saveCookies,
         });
         if (next.activeEnvironmentId !== undefined) {
           setActiveEnvId(next.activeEnvironmentId);
@@ -252,7 +280,38 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
 
   const collectionUpsertMutation = useMutation(
     trpc.collections.upsert.mutationOptions({
-      onSuccess: async () => {
+      onMutate: async (input) => {
+        await queryClient.cancelQueries(trpc.collections.list.queryFilter());
+        const previous = queryClient.getQueryData<Collection[]>(
+          trpc.collections.list.queryKey(),
+        );
+        queryClient.setQueryData<Collection[]>(
+          trpc.collections.list.queryKey(),
+          (current = []) => {
+            const optimistic: Collection = {
+              id: input.id,
+              name: input.name,
+              items: input.items as Collection["items"],
+              requests:
+                current.find((item) => item.id === input.id)?.requests ?? [],
+              updatedAt: input.updatedAt,
+            };
+            const without = current.filter((item) => item.id !== input.id);
+            return [optimistic, ...without];
+          },
+        );
+        return { previous };
+      },
+      onError: (_error, _input, context) => {
+        if (context?.previous) {
+          queryClient.setQueryData(
+            trpc.collections.list.queryKey(),
+            context.previous,
+          );
+        }
+        toast.error("Could not save collection");
+      },
+      onSettled: async () => {
         await queryClient.invalidateQueries(trpc.collections.list.queryFilter());
       },
     }),
@@ -260,7 +319,27 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
 
   const collectionRemoveMutation = useMutation(
     trpc.collections.remove.mutationOptions({
-      onSuccess: async () => {
+      onMutate: async (input) => {
+        await queryClient.cancelQueries(trpc.collections.list.queryFilter());
+        const previous = queryClient.getQueryData<Collection[]>(
+          trpc.collections.list.queryKey(),
+        );
+        queryClient.setQueryData<Collection[]>(
+          trpc.collections.list.queryKey(),
+          (current = []) => current.filter((item) => item.id !== input.id),
+        );
+        return { previous };
+      },
+      onError: (_error, _input, context) => {
+        if (context?.previous) {
+          queryClient.setQueryData(
+            trpc.collections.list.queryKey(),
+            context.previous,
+          );
+        }
+        toast.error("Could not delete collection");
+      },
+      onSettled: async () => {
         await queryClient.invalidateQueries(trpc.collections.list.queryFilter());
       },
     }),
@@ -289,6 +368,7 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
   );
 
   useEffect(() => {
+    setCookieJar(loadCookieJar());
     void resolveTransport().then(({ transport: next, extension: ext }) => {
       setTransport(next);
       setExtension(ext);
@@ -312,9 +392,15 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
         autoSaveHistory: settingsQuery.data.autoSaveHistory,
         saveRequestBody: settingsQuery.data.saveRequestBody,
         saveResponseMeta: settingsQuery.data.saveResponseMeta,
+        saveCookies: settingsQuery.data.saveCookies,
       });
     }
   }, [settingsQuery.data]);
+
+  function updateCookieJar(next: StoredCookie[]) {
+    setCookieJar(next);
+    saveCookieJar(next);
+  }
 
   useEffect(() => {
     if (environmentsQuery.data) {
@@ -380,10 +466,16 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
     () => activeVariables(environments, activeEnvId),
     [environments, activeEnvId],
   );
-  const executePayload = useMemo(
-    () => buildExecutePayload(draft, variables),
-    [draft, variables],
-  );
+  const executePayload = useMemo(() => {
+    const base = buildExecutePayload(draft, variables);
+    if (!settings.saveCookies) return base;
+    const cookieHeader = cookiesForUrl(cookieJar, base.url);
+    if (!cookieHeader) return base;
+    return {
+      ...base,
+      headers: applyCookieHeader(base.headers, cookieHeader),
+    };
+  }, [draft, variables, settings.saveCookies, cookieJar]);
 
   function patch(partial: Partial<RequestDraft>) {
     setDraft((current) => ({ ...current, ...partial }));
@@ -450,13 +542,13 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
     }
   }
 
-  async function persistCollection(collection: {
+  function persistCollection(collection: {
     id: string;
     name: string;
     items: Collection["items"];
     updatedAt: number;
   }) {
-    await collectionUpsertMutation.mutateAsync({
+    return collectionUpsertMutation.mutateAsync({
       id: collection.id,
       name: collection.name,
       items: collection.items,
@@ -514,14 +606,15 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
 
   async function handleCreateCollection(name: string) {
     const collection = createCollection(name);
-    await persistCollection(collection);
+    setSidebarTab("collections");
+    void persistCollection(collection);
     toast.success(`Created ${name}`);
   }
 
   async function handleRenameCollection(id: string, name: string) {
     const target = collections.find((item) => item.id === id);
     if (!target) return;
-    await persistCollection({
+    void persistCollection({
       ...target,
       name,
       updatedAt: Date.now(),
@@ -529,7 +622,7 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
   }
 
   async function handleDeleteCollection(id: string) {
-    await collectionRemoveMutation.mutateAsync({ id });
+    void collectionRemoveMutation.mutateAsync({ id });
     toast.success("Collection deleted");
   }
 
@@ -545,7 +638,7 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
       parentFolderId,
       createFolder(name),
     );
-    await persistCollection(updated);
+    void persistCollection(updated);
   }
 
   async function handleRenameFolder(
@@ -555,7 +648,7 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
   ) {
     const target = collections.find((item) => item.id === collectionId);
     if (!target) return;
-    await persistCollection({
+    void persistCollection({
       ...target,
       items: renameCollectionItem(target.items, folderId, name),
       updatedAt: Date.now(),
@@ -565,7 +658,7 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
   async function handleDeleteFolder(collectionId: string, folderId: string) {
     const target = collections.find((item) => item.id === collectionId);
     if (!target) return;
-    await persistCollection({
+    void persistCollection({
       ...target,
       items: removeCollectionItem(target.items, folderId),
       updatedAt: Date.now(),
@@ -664,6 +757,13 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
       );
       setTransport(used);
       setResult(next);
+
+      if (settings.saveCookies && next.ok) {
+        const captured = extractCookiesFromHeaders(next.headers, executePayload.url);
+        if (captured.length > 0) {
+          updateCookieJar(mergeCookieJar(cookieJar, captured));
+        }
+      }
 
       if (settings.autoSaveHistory) {
         const prepared = await ensureRequestId({
@@ -765,9 +865,16 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "s") {
         event.preventDefault();
         void saveRequestRef.current();
+        return;
+      }
+      if (key === "b") {
+        event.preventDefault();
+        setSidebarOpen((open) => !open);
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -816,284 +923,375 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
   return (
     <ResizablePanelGroup
       orientation="horizontal"
-      className="h-dvh min-h-0 bg-background text-foreground"
+      className="h-svh max-h-svh overflow-hidden bg-background text-foreground"
+      style={{ overflow: "hidden" }}
     >
+      {sidebarOpen ? (
       <ResizablePanel
         defaultSize="20%"
         minSize="14%"
         maxSize="30%"
         className="flex min-h-0 flex-col bg-sidebar"
       >
-        <div className="flex items-center justify-between gap-2 px-4 py-4">
-          <p className="font-mono text-xs text-muted-foreground uppercase">
+        <div className="flex items-center justify-between gap-2 px-3 py-3">
+          <p className="font-mono text-xs tracking-wide text-muted-foreground uppercase">
             Reqyx
           </p>
+          <div className="flex items-center gap-0.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Hide sidebar"
+                  onClick={() => setSidebarOpen(false)}
+                >
+                  <PanelLeftCloseIcon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent className="flex items-center gap-2">
+                Hide sidebar
+                <KbdGroup>
+                  <Kbd>Ctrl</Kbd>
+                  <Kbd>B</Kbd>
+                </KbdGroup>
+              </TooltipContent>
+            </Tooltip>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="Settings">
+                  <Settings2Icon />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-64 gap-3 p-3">
+                <div className="flex flex-col gap-1">
+                  <p className="text-xs font-medium">Save options</p>
+                  <p className="text-[0.7rem] text-muted-foreground">
+                    Ctrl+S saves · Ctrl+B toggles sidebar.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="auto-save" className="text-xs font-normal">
+                      Auto-save on send
+                    </Label>
+                    <Switch
+                      id="auto-save"
+                      size="sm"
+                      checked={settings.autoSaveHistory}
+                      onCheckedChange={(checked) =>
+                        void updateSettings({ autoSaveHistory: checked })
+                      }
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="save-body" className="text-xs font-normal">
+                      Save request body
+                    </Label>
+                    <Switch
+                      id="save-body"
+                      size="sm"
+                      checked={settings.saveRequestBody}
+                      onCheckedChange={(checked) =>
+                        void updateSettings({ saveRequestBody: checked })
+                      }
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="save-meta" className="text-xs font-normal">
+                      Save status codes
+                    </Label>
+                    <Switch
+                      id="save-meta"
+                      size="sm"
+                      checked={settings.saveResponseMeta}
+                      onCheckedChange={(checked) =>
+                        void updateSettings({ saveResponseMeta: checked })
+                      }
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="save-cookies" className="text-xs font-normal">
+                      Save cookies
+                    </Label>
+                    <Switch
+                      id="save-cookies"
+                      size="sm"
+                      checked={settings.saveCookies}
+                      onCheckedChange={(checked) =>
+                        void updateSettings({ saveCookies: checked })
+                      }
+                    />
+                  </div>
+                </div>
+                <Separator />
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-[0.65rem] text-muted-foreground uppercase">
+                    Environment
+                  </Label>
+                  <Select
+                    value={activeEnvId ?? undefined}
+                    onValueChange={(value) => {
+                      setActiveEnvId(value);
+                      void setActiveEnvMutation.mutateAsync({ id: value });
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Environment" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {environments.map((env) => (
+                          <SelectItem key={env.id} value={env.id}>
+                            {env.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </PopoverContent>
+            </Popover>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="Account menu">
+                  <UserIcon />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel className="font-normal">
+                    {sessionPending ? (
+                      <span className="text-muted-foreground">Loading…</span>
+                    ) : user ? (
+                      <div className="flex flex-col gap-0.5">
+                        <span className="truncate text-sm font-medium">
+                          {user.name}
+                        </span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {user.email}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">Signed out</span>
+                    )}
+                  </DropdownMenuLabel>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuItem
+                    onClick={() =>
+                      void signOut({
+                        fetchOptions: {
+                          onSuccess: () => {
+                            window.location.href = "/login";
+                          },
+                        },
+                      })
+                    }
+                  >
+                    <LogOutIcon />
+                    Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+
+        <div className="px-3 pb-3">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label="Account menu">
-                <UserIcon />
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-between"
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <PlusIcon data-icon="inline-start" />
+                  New request
+                </span>
+                <ChevronDownIcon className="size-3.5 opacity-60" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuContent align="start" className="w-52">
               <DropdownMenuGroup>
-                <DropdownMenuLabel className="font-normal">
-                  {sessionPending ? (
-                    <span className="text-muted-foreground">Loading…</span>
-                  ) : user ? (
-                    <div className="flex flex-col gap-0.5">
-                      <span className="truncate text-sm font-medium">
-                        {user.name}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {user.email}
-                      </span>
-                    </div>
-                  ) : (
-                    <span className="text-muted-foreground">Signed out</span>
-                  )}
-                </DropdownMenuLabel>
-              </DropdownMenuGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuGroup>
-                <DropdownMenuItem
-                  onClick={() =>
-                    void signOut({
-                      fetchOptions: {
-                        onSuccess: () => {
-                          window.location.href = "/login";
-                        },
-                      },
-                    })
-                  }
-                >
-                  <LogOutIcon />
-                  Sign out
+                <DropdownMenuItem onClick={() => newRequest("http")}>
+                  <PlusIcon />
+                  REST
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => newRequest("sse")}>
+                  <RadioIcon />
+                  SSE
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => newRequest("websocket")}>
+                  <WorkflowIcon />
+                  WebSocket
                 </DropdownMenuItem>
               </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
 
-        <div className="flex flex-col gap-2 px-3 pb-3">
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full justify-start"
-            onClick={() => newRequest("http")}
-          >
-            <PlusIcon data-icon="inline-start" />
-            HTTP request
-          </Button>
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="justify-start"
-              onClick={() => newRequest("sse")}
-            >
-              <RadioIcon data-icon="inline-start" />
-              SSE
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="justify-start"
-              onClick={() => newRequest("websocket")}
-            >
-              <WorkflowIcon data-icon="inline-start" />
-              WS
-            </Button>
+        <Separator />
+
+        <Tabs
+          value={sidebarTab}
+          onValueChange={(value) => setSidebarTab(value as SidebarTab)}
+          className="flex min-h-0 flex-1 flex-col gap-0"
+        >
+          <div className="px-3 py-2">
+            <TabsList className="w-full">
+              <TabsTrigger value="collections" className="flex-1 gap-1.5">
+                <FolderIcon className="size-3.5" />
+                Collections
+              </TabsTrigger>
+              <TabsTrigger value="history" className="flex-1 gap-1.5">
+                <ClockIcon className="size-3.5" />
+                History
+              </TabsTrigger>
+            </TabsList>
           </div>
-        </div>
 
-        <Separator />
-
-        <div className="px-3 py-3">
-          <Label className="mb-2 block font-mono text-[0.65rem] text-muted-foreground uppercase">
-            Environment
-          </Label>
-          <Select
-            value={activeEnvId ?? undefined}
-            onValueChange={(value) => {
-              setActiveEnvId(value);
-              void setActiveEnvMutation.mutateAsync({ id: value });
-            }}
+          <TabsContent
+            value="collections"
+            className="mt-0 flex min-h-0 flex-1 flex-col outline-none"
           >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Environment" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {environments.map((env) => (
-                  <SelectItem key={env.id} value={env.id}>
-                    {env.name}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </div>
+            <CollectionTree
+              collections={collections}
+              activeRequestId={requestId}
+              onOpenRequest={openRequest}
+              onCreateCollection={handleCreateCollection}
+              onRenameCollection={handleRenameCollection}
+              onDeleteCollection={handleDeleteCollection}
+              onCreateFolder={handleCreateFolder}
+              onRenameFolder={handleRenameFolder}
+              onDeleteFolder={handleDeleteFolder}
+              onCreateRequest={handleCreateRequest}
+              onRenameRequest={handleRenameRequest}
+              onDeleteRequest={handleDeleteRequest}
+              onSaveCurrentTo={saveCurrentToCollection}
+            />
+          </TabsContent>
 
-        <Separator />
-
-        <div className="flex min-h-0 flex-[1.4] flex-col">
-          <CollectionTree
-            collections={collections}
-            activeRequestId={requestId}
-            onOpenRequest={openRequest}
-            onCreateCollection={handleCreateCollection}
-            onRenameCollection={handleRenameCollection}
-            onDeleteCollection={handleDeleteCollection}
-            onCreateFolder={handleCreateFolder}
-            onRenameFolder={handleRenameFolder}
-            onDeleteFolder={handleDeleteFolder}
-            onCreateRequest={handleCreateRequest}
-            onRenameRequest={handleRenameRequest}
-            onDeleteRequest={handleDeleteRequest}
-            onSaveCurrentTo={saveCurrentToCollection}
-          />
-        </div>
-
-        <Separator />
-
-        <div className="flex max-h-48 min-h-0 flex-1 flex-col">
-          <div className="flex items-center justify-between px-4 py-2">
-            <p className="font-mono text-[0.65rem] text-muted-foreground uppercase">
-              History
-            </p>
-            {history.length > 0 ? (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Clear history"
-                onClick={() => void clearHistory()}
-              >
-                <Trash2Icon />
-              </Button>
-            ) : null}
-          </div>
-          <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
-            {historyQuery.isLoading ? (
-              <div className="flex items-center gap-2 p-2 text-xs text-muted-foreground">
-                <Spinner />
-                Loading…
-              </div>
-            ) : history.length === 0 ? (
-              <Empty className="min-h-24 items-start justify-start border-0 p-2 text-left">
-                <EmptyHeader className="items-start text-left">
-                  <EmptyTitle>No requests yet</EmptyTitle>
-                  <EmptyDescription>
-                    Save with Ctrl+S or enable auto-save on send.
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : (
-              <ItemGroup className="gap-0.5">
-                {history.map((item) => (
-                  <Item
-                    key={item.id}
-                    size="xs"
-                    asChild
-                    className={cn(item.id === requestId && "bg-muted")}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => openRequest(item.id)}
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        void removeMutation.mutateAsync({ id: item.id });
-                      }}
+          <TabsContent
+            value="history"
+            className="mt-0 flex min-h-0 flex-1 flex-col outline-none"
+          >
+            <div className="flex items-center justify-between px-4 py-2">
+              <p className="font-mono text-[0.65rem] text-muted-foreground uppercase">
+                Recent
+              </p>
+              {history.length > 0 ? (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Clear history"
+                  onClick={() => void clearHistory()}
+                >
+                  <Trash2Icon />
+                </Button>
+              ) : null}
+            </div>
+            <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
+              {historyQuery.isLoading ? (
+                <div className="flex items-center gap-2 p-2 text-xs text-muted-foreground">
+                  <Spinner />
+                  Loading…
+                </div>
+              ) : history.length === 0 ? (
+                <Empty className="min-h-24 items-start justify-start border-0 p-2 text-left">
+                  <EmptyHeader className="items-start text-left">
+                    <EmptyTitle>No requests yet</EmptyTitle>
+                    <EmptyDescription>
+                      Save with Ctrl+S or enable auto-save on send.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              ) : (
+                <ItemGroup className="gap-0.5">
+                  {history.map((item) => (
+                    <Item
+                      key={item.id}
+                      size="xs"
+                      asChild
+                      className={cn(item.id === requestId && "bg-muted")}
                     >
-                      <ItemContent>
-                        <ItemTitle
-                          className={cn(
-                            "font-mono text-[0.65rem] font-semibold",
-                            item.kind === "http"
-                              ? methodClass[item.method]
-                              : "text-brand",
-                          )}
-                        >
-                          {item.kind === "http"
-                            ? item.method
-                            : item.kind.toUpperCase()}
-                        </ItemTitle>
-                        <ItemDescription className="font-mono">
-                          {item.url || item.name}
-                        </ItemDescription>
-                      </ItemContent>
-                    </button>
-                  </Item>
-                ))}
-              </ItemGroup>
-            )}
-          </ScrollArea>
-        </div>
-
-        <Separator />
-        <div className="flex flex-col gap-3 px-4 py-4">
-          <div className="flex items-center gap-2">
-            <Settings2Icon className="size-3.5 text-muted-foreground" />
-            <p className="font-mono text-[0.65rem] text-muted-foreground uppercase">
-              Save options
-            </p>
-          </div>
-          <p className="text-[0.7rem] text-muted-foreground">
-            Press Ctrl+S to save. Auto-save on send is off by default.
-          </p>
-          <div className="flex items-center justify-between gap-3">
-            <Label htmlFor="auto-save" className="text-xs font-normal">
-              Auto-save on send
-            </Label>
-            <Switch
-              id="auto-save"
-              size="sm"
-              checked={settings.autoSaveHistory}
-              onCheckedChange={(checked) =>
-                void updateSettings({ autoSaveHistory: checked })
-              }
-            />
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <Label htmlFor="save-body" className="text-xs font-normal">
-              Save request body
-            </Label>
-            <Switch
-              id="save-body"
-              size="sm"
-              checked={settings.saveRequestBody}
-              onCheckedChange={(checked) =>
-                void updateSettings({ saveRequestBody: checked })
-              }
-            />
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <Label htmlFor="save-meta" className="text-xs font-normal">
-              Save status codes
-            </Label>
-            <Switch
-              id="save-meta"
-              size="sm"
-              checked={settings.saveResponseMeta}
-              onCheckedChange={(checked) =>
-                void updateSettings({ saveResponseMeta: checked })
-              }
-            />
-          </div>
-        </div>
+                      <button
+                        type="button"
+                        onClick={() => openRequest(item.id)}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          void removeMutation.mutateAsync({ id: item.id });
+                        }}
+                      >
+                        <ItemContent>
+                          <ItemTitle
+                            className={cn(
+                              "font-mono text-[0.65rem] font-semibold",
+                              item.kind === "http"
+                                ? methodClass[item.method]
+                                : "text-brand",
+                            )}
+                          >
+                            {item.kind === "http"
+                              ? item.method
+                              : item.kind.toUpperCase()}
+                          </ItemTitle>
+                          <ItemDescription className="font-mono">
+                            {item.url || item.name}
+                          </ItemDescription>
+                        </ItemContent>
+                      </button>
+                    </Item>
+                  ))}
+                </ItemGroup>
+              )}
+            </ScrollArea>
+          </TabsContent>
+        </Tabs>
       </ResizablePanel>
+      ) : null}
 
-      <ResizableHandle withHandle />
+      {sidebarOpen ? <ResizableHandle withHandle /> : null}
 
-      <ResizablePanel defaultSize="80%" minSize="50%" className="min-w-0">
+      <ResizablePanel
+        defaultSize={sidebarOpen ? "80%" : "100%"}
+        minSize="50%"
+        className="min-h-0 min-w-0"
+        style={{ overflow: "hidden" }}
+      >
         {requestLoading ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
             <Spinner />
             Loading request…
           </div>
         ) : (
-          <div className="flex h-full min-h-0 flex-col">
-            <header className="flex items-center justify-between gap-3 px-4 py-3">
+          <div className="relative h-full overflow-hidden">
+          <div className="absolute inset-0 flex flex-col overflow-hidden">
+            <header className="flex shrink-0 items-center justify-between gap-3 px-4 py-3">
               <div className="flex min-w-0 flex-1 items-center gap-2">
+                {!sidebarOpen ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Show sidebar"
+                        onClick={() => setSidebarOpen(true)}
+                      >
+                        <PanelLeftIcon />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent className="flex items-center gap-2">
+                      Show sidebar
+                      <KbdGroup>
+                        <Kbd>Ctrl</Kbd>
+                        <Kbd>B</Kbd>
+                      </KbdGroup>
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
                 <Input
                   value={draft.name}
                   onChange={(event) => patch({ name: event.target.value })}
@@ -1101,28 +1299,43 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
                   placeholder="Request name"
                   aria-label="Request name"
                 />
-                {isDirty ? (
-                  <Badge variant="secondary" className="shrink-0 font-mono text-[0.65rem]">
-                    Unsaved
-                  </Badge>
-                ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Button
-                  variant={isDirty ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => void saveRequest()}
-                  className={cn(
-                    isDirty && "bg-brand text-brand-foreground hover:bg-brand/90",
-                  )}
-                >
-                  <SaveIcon data-icon="inline-start" />
-                  Save
-                  <KbdGroup className="ml-1 hidden sm:inline-flex">
-                    <Kbd>Ctrl</Kbd>
-                    <Kbd>S</Kbd>
-                  </KbdGroup>
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="sm"
+                      disabled={upsertMutation.isPending}
+                      onClick={() => void saveRequest()}
+                      className={cn(
+                        "min-w-20 gap-1.5 transition-all",
+                        isDirty
+                          ? "bg-brand text-brand-foreground hover:bg-brand/90"
+                          : "border border-border/80 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
+                      )}
+                    >
+                      {upsertMutation.isPending ? (
+                        <Spinner data-icon="inline-start" />
+                      ) : isDirty ? (
+                        <SaveIcon data-icon="inline-start" />
+                      ) : (
+                        <CheckIcon data-icon="inline-start" />
+                      )}
+                      {upsertMutation.isPending
+                        ? "Saving"
+                        : isDirty
+                          ? "Save"
+                          : "Saved"}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="flex items-center gap-2">
+                    {isDirty ? "Save request" : "All changes saved"}
+                    <KbdGroup>
+                      <Kbd>Ctrl</Kbd>
+                      <Kbd>S</Kbd>
+                    </KbdGroup>
+                  </TooltipContent>
+                </Tooltip>
                 <Badge
                   variant="secondary"
                   className={cn(
@@ -1156,9 +1369,9 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
                 </Button>
               </div>
             </header>
-            <Separator />
+            <Separator className="shrink-0" />
 
-            <div className="flex items-center gap-2 px-4 py-3">
+            <div className="flex shrink-0 items-center gap-2 px-4 py-3">
               <Select
                 value={draft.kind}
                 onValueChange={(value) => {
@@ -1183,7 +1396,7 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
-                    <SelectItem value="http">HTTP</SelectItem>
+                    <SelectItem value="http">REST</SelectItem>
                     <SelectItem value="sse">SSE</SelectItem>
                     <SelectItem value="websocket">WebSocket</SelectItem>
                   </SelectGroup>
@@ -1268,17 +1481,24 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
                 {primaryLabel}
               </Button>
             </div>
-            <Separator />
+            <Separator className="shrink-0" />
 
             <ResizablePanelGroup
               orientation="horizontal"
-              className="min-h-0 flex-1"
+              className="min-h-0 flex-1 overflow-hidden"
+              style={{ overflow: "hidden" }}
             >
-              <ResizablePanel defaultSize="50%" minSize="30%" className="min-w-0">
+              <ResizablePanel
+                defaultSize="50%"
+                minSize="30%"
+                className="min-h-0 min-w-0"
+                style={{ overflow: "hidden" }}
+              >
+                <div className="relative h-full overflow-hidden">
                 <Tabs
                   value={tab}
                   onValueChange={(value) => setTab(value as EditorTab)}
-                  className="flex h-full min-h-0 flex-col gap-0"
+                  className="absolute inset-0 flex flex-col gap-0 overflow-hidden"
                 >
                   <div className="px-3 py-2">
                     <TabsList>
@@ -1288,6 +1508,14 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
                         <TabsTrigger value="body">Body</TabsTrigger>
                       ) : null}
                       <TabsTrigger value="auth">Auth</TabsTrigger>
+                      <TabsTrigger value="cookies">
+                        Cookies
+                        {cookieJar.length > 0 ? (
+                          <span className="font-mono text-[0.65rem] text-muted-foreground">
+                            {cookieJar.length}
+                          </span>
+                        ) : null}
+                      </TabsTrigger>
                       <TabsTrigger value="code">Code</TabsTrigger>
                     </TabsList>
                   </div>
@@ -1382,57 +1610,72 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
                     />
                   </TabsContent>
                   <TabsContent
+                    value="cookies"
+                    className="mt-0 min-h-0 flex-1 overflow-auto p-4 outline-none"
+                  >
+                    <CookieJar cookies={cookieJar} onChange={updateCookieJar} />
+                  </TabsContent>
+                  <TabsContent
                     value="code"
                     className="mt-0 min-h-0 flex-1 overflow-hidden outline-none"
                   >
                     <CodeGen payload={executePayload} />
                   </TabsContent>
                 </Tabs>
+                </div>
               </ResizablePanel>
 
               <ResizableHandle withHandle />
 
-              <ResizablePanel defaultSize="50%" minSize="30%" className="min-w-0">
-                <section className="flex h-full min-h-0 flex-col bg-card">
-                  {draft.kind === "sse" ? (
-                    <SseView
-                      events={sseEvents}
-                      connected={sseConnected}
-                      error={sseError}
-                      onClear={() => setSseEvents([])}
-                    />
-                  ) : draft.kind === "websocket" ? (
-                    <WebSocketView
-                      messages={wsMessages}
-                      connected={wsConnected}
-                      onClear={() => setWsMessages([])}
-                      onSend={(data) => {
-                        wsSessionRef.current?.send(data);
-                        setWsMessages((items) => [
-                          ...items,
-                          {
-                            id: createId(),
-                            direction: "out",
-                            data,
-                            at: Date.now(),
-                          },
-                        ]);
-                      }}
-                    />
-                  ) : (
-                    <>
-                      <div className="px-4 py-2.5">
-                        <p className="text-xs font-medium">Response</p>
-                      </div>
-                      <Separator />
-                      <div className="min-h-0 flex-1">
-                        <ResponseView result={result} loading={loading} />
-                      </div>
-                    </>
-                  )}
+              <ResizablePanel
+                defaultSize="50%"
+                minSize="30%"
+                className="min-h-0 min-w-0"
+                style={{ overflow: "hidden" }}
+              >
+                <section className="relative h-full overflow-hidden bg-card">
+                  <div className="absolute inset-0 flex flex-col overflow-hidden">
+                    {draft.kind === "sse" ? (
+                      <SseView
+                        events={sseEvents}
+                        connected={sseConnected}
+                        error={sseError}
+                        onClear={() => setSseEvents([])}
+                      />
+                    ) : draft.kind === "websocket" ? (
+                      <WebSocketView
+                        messages={wsMessages}
+                        connected={wsConnected}
+                        onClear={() => setWsMessages([])}
+                        onSend={(data) => {
+                          wsSessionRef.current?.send(data);
+                          setWsMessages((items) => [
+                            ...items,
+                            {
+                              id: createId(),
+                              direction: "out",
+                              data,
+                              at: Date.now(),
+                            },
+                          ]);
+                        }}
+                      />
+                    ) : (
+                      <>
+                        <div className="shrink-0 px-4 py-2.5">
+                          <p className="text-xs font-medium">Response</p>
+                        </div>
+                        <Separator className="shrink-0" />
+                        <div className="min-h-0 flex-1 overflow-hidden">
+                          <ResponseView result={result} loading={loading} />
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </section>
               </ResizablePanel>
             </ResizablePanelGroup>
+          </div>
           </div>
         )}
       </ResizablePanel>

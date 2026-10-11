@@ -128,6 +128,7 @@ export const userSettings = pgTable("user_settings", {
   autoSaveHistory: boolean("auto_save_history").notNull().default(false),
   saveRequestBody: boolean("save_request_body").notNull().default(true),
   saveResponseMeta: boolean("save_response_meta").notNull().default(true),
+  saveCookies: boolean("save_cookies").notNull().default(true),
   activeEnvironmentId: text("active_environment_id"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

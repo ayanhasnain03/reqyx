@@ -32,9 +32,13 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={cn(geistSans.variable, geistMono.variable)}
+      className={cn(
+        "h-full overflow-hidden",
+        geistSans.variable,
+        geistMono.variable,
+      )}
     >
-      <body className="min-h-svh font-sans antialiased">
+      <body className="h-full overflow-hidden font-sans antialiased">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

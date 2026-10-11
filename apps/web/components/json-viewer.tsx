@@ -34,9 +34,14 @@ export function JsonViewer({ body, className }: Props) {
     activeMode === "raw" ? body || "(empty)" : pretty || "(empty)";
 
   return (
-    <div className={cn("flex h-full min-h-0 flex-col", className)}>
-      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
-        <div className="flex items-center gap-2">
+    <div
+      className={cn(
+        "flex h-full min-h-0 flex-col overflow-hidden",
+        className,
+      )}
+    >
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-4 py-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Badge
             variant="secondary"
             className={cn(
@@ -66,7 +71,7 @@ export function JsonViewer({ body, className }: Props) {
         </div>
         <CopyButton value={body} label="Copy response body" />
       </div>
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="h-full min-h-0 flex-1">
         {activeMode === "tree" && parsed.ok ? (
           <div className="p-4">
             <JsonTree data={parsed.value} />
@@ -74,7 +79,7 @@ export function JsonViewer({ body, className }: Props) {
         ) : (
           <pre
             className={cn(
-              "p-4 font-mono text-xs leading-6 whitespace-pre-wrap break-words",
+              "p-4 font-mono text-xs leading-6 break-all whitespace-pre-wrap [overflow-wrap:anywhere]",
               activeMode === "raw" && "text-foreground/90",
             )}
           >

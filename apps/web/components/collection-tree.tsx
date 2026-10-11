@@ -20,6 +20,9 @@ import {
   ContextMenuGroup,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@repo/ui/components/context-menu";
 import {
@@ -45,7 +48,9 @@ import {
   FolderPlusIcon,
   PencilIcon,
   PlusIcon,
+  RadioIcon,
   Trash2Icon,
+  WorkflowIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -168,11 +173,65 @@ function promptDefault(prompt: PromptKind): string {
       return "Auth";
     case "request-create":
       return prompt.kind === "http"
-        ? "Get products"
+        ? "REST request"
         : prompt.kind === "sse"
-          ? "Events stream"
-          : "Realtime";
+          ? "SSE stream"
+          : "WebSocket";
   }
+}
+
+function RequestKindItems({
+  collectionId,
+  parentFolderId,
+  openPrompt,
+}: {
+  collectionId: string;
+  parentFolderId: string | null;
+  openPrompt: (prompt: PromptKind) => void;
+}) {
+  return (
+    <>
+      <ContextMenuItem
+        onClick={() =>
+          openPrompt({
+            type: "request-create",
+            collectionId,
+            parentFolderId,
+            kind: "http",
+          })
+        }
+      >
+        <FilePlusIcon />
+        REST
+      </ContextMenuItem>
+      <ContextMenuItem
+        onClick={() =>
+          openPrompt({
+            type: "request-create",
+            collectionId,
+            parentFolderId,
+            kind: "sse",
+          })
+        }
+      >
+        <RadioIcon />
+        SSE
+      </ContextMenuItem>
+      <ContextMenuItem
+        onClick={() =>
+          openPrompt({
+            type: "request-create",
+            collectionId,
+            parentFolderId,
+            kind: "websocket",
+          })
+        }
+      >
+        <WorkflowIcon />
+        WebSocket
+      </ContextMenuItem>
+    </>
+  );
 }
 
 export function CollectionTree({
@@ -280,10 +339,7 @@ export function CollectionTree({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center justify-between gap-2 px-4 py-2">
-        <p className="font-mono text-[0.65rem] text-muted-foreground uppercase">
-          Collections
-        </p>
+      <div className="flex items-center justify-end px-3 py-1">
         <Button
           variant="ghost"
           size="icon-sm"
@@ -480,19 +536,19 @@ function CollectionNode({
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuGroup>
-            <ContextMenuItem
-              onClick={() =>
-                openPrompt({
-                  type: "request-create",
-                  collectionId: collection.id,
-                  parentFolderId: null,
-                  kind: "http",
-                })
-              }
-            >
-              <FilePlusIcon />
-              New request
-            </ContextMenuItem>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>
+                <FilePlusIcon />
+                New request
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                <RequestKindItems
+                  collectionId={collection.id}
+                  parentFolderId={null}
+                  openPrompt={openPrompt}
+                />
+              </ContextMenuSubContent>
+            </ContextMenuSub>
             <ContextMenuItem
               onClick={() =>
                 openPrompt({
@@ -610,35 +666,34 @@ function TreeItem({
                 variant="ghost"
                 size="icon-sm"
                 className="opacity-0 group-hover:opacity-100"
-                aria-label="Add request"
+                aria-label="Add folder"
                 onClick={() =>
                   openPrompt({
-                    type: "request-create",
+                    type: "folder-create",
                     collectionId: collection.id,
                     parentFolderId: item.id,
-                    kind: "http",
                   })
                 }
               >
-                <FilePlusIcon />
+                <FolderPlusIcon />
               </Button>
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent>
             <ContextMenuGroup>
-              <ContextMenuItem
-                onClick={() =>
-                  openPrompt({
-                    type: "request-create",
-                    collectionId: collection.id,
-                    parentFolderId: item.id,
-                    kind: "http",
-                  })
-                }
-              >
-                <FilePlusIcon />
-                New request
-              </ContextMenuItem>
+              <ContextMenuSub>
+                <ContextMenuSubTrigger>
+                  <FilePlusIcon />
+                  New request
+                </ContextMenuSubTrigger>
+                <ContextMenuSubContent>
+                  <RequestKindItems
+                    collectionId={collection.id}
+                    parentFolderId={item.id}
+                    openPrompt={openPrompt}
+                  />
+                </ContextMenuSubContent>
+              </ContextMenuSub>
               <ContextMenuItem
                 onClick={() =>
                   openPrompt({
