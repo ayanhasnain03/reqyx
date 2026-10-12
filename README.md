@@ -5,6 +5,7 @@ Minimal API testing platform — Next.js workspace + Chrome extension for local 
 ## Architecture
 
 - `apps/web` — request builder, auth, synced history, response viewer
+- `apps/waitlist` — public waitlist landing (`:3001`), stores emails in Postgres
 - `apps/extension` — MV3 service worker fetch (any host/port, including localhost) + popup + DevTools panel
 - `apps/mock` — Hono mock API on `:8080` for HTTP / SSE / WebSocket / auth testing
 - `packages/core` — shared types, protocol, execute helper
@@ -20,15 +21,17 @@ Local URLs (`http://localhost:PORT`, `127.0.0.1`, `*.localhost`) always go throu
 
 ```sh
 cp .env.example apps/web/.env
+cp apps/waitlist/.env.example apps/waitlist/.env
 docker compose up -d
 pnpm install
-pnpm --filter web db:push
+pnpm db:push
 ```
 
 ## Develop
 
 ```sh
 pnpm --filter web dev
+pnpm --filter waitlist dev
 pnpm --filter extension dev
 pnpm --filter mock dev
 ```

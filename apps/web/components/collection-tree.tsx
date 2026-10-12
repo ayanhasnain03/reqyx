@@ -163,20 +163,14 @@ function promptTitle(prompt: PromptKind): string {
 
 function promptDefault(prompt: PromptKind): string {
   switch (prompt.type) {
-    case "collection-create":
-      return "Ecommerce";
     case "collection-rename":
     case "folder-rename":
     case "request-rename":
       return prompt.current;
+    case "collection-create":
     case "folder-create":
-      return "Auth";
     case "request-create":
-      return prompt.kind === "http"
-        ? "REST request"
-        : prompt.kind === "sse"
-          ? "SSE stream"
-          : "WebSocket";
+      return "";
   }
 }
 
@@ -504,7 +498,7 @@ function CollectionNode({
             <CollapsibleTrigger asChild>
               <button
                 type="button"
-                className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-xs"
+                className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-2 py-1.5 text-left text-xs"
               >
                 <ChevronRightIcon
                   className={cn(
@@ -650,7 +644,7 @@ function TreeItem({
               <CollapsibleTrigger asChild>
                 <button
                   type="button"
-                  className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-xs"
+                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-2 py-1.5 text-left text-xs"
                 >
                   <ChevronRightIcon
                     className={cn(
@@ -782,7 +776,7 @@ function TreeItem({
           type="button"
           onClick={() => onOpenRequest(item.requestId)}
           className={cn(
-            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted/70",
+            "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted/70",
             active && "bg-muted",
           )}
         >

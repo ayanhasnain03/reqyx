@@ -180,14 +180,19 @@ export function startSseViaExtension(
 export function connectWsViaExtension(
   url: string,
   onMessage: (message: WsMessage) => void,
-): { id: string; send: (data: string) => void; close: () => void } {
+): { id: string; send: (data: string) => boolean; close: () => void } {
   const id = createId();
+  let open = false;
 
   function handle(event: MessageEvent) {
     if (event.source !== window) return;
     if (!isBridgeMessage(event.data)) return;
     if (event.data.type === "WS_MESSAGE" && event.data.id === id) {
-      onMessage(event.data.message);
+      const message = event.data.message;
+      if (message.direction === "system") {
+        open = message.data === "Connected";
+      }
+      onMessage(message);
     }
   }
 
@@ -203,6 +208,7 @@ export function connectWsViaExtension(
   return {
     id,
     send: (data: string) => {
+      if (!open) return false;
       const message: BridgeWsSend = {
         source: BRIDGE_SOURCE,
         type: "WS_SEND",
@@ -210,8 +216,10 @@ export function connectWsViaExtension(
         data,
       };
       window.postMessage(message, window.location.origin);
+      return true;
     },
     close: () => {
+      open = false;
       window.removeEventListener("message", handle);
       const message: BridgeWsClose = {
         source: BRIDGE_SOURCE,

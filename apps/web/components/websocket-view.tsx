@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 type Props = {
   messages: WsMessage[];
   connected: boolean;
+  connecting?: boolean;
   onSend: (data: string) => void;
   onClear: () => void;
 };
@@ -25,10 +26,11 @@ type Props = {
 export function WebSocketView({
   messages,
   connected,
+  connecting = false,
   onSend,
   onClear,
 }: Props) {
-  const [draft, setDraft] = useState("ping");
+  const [draft, setDraft] = useState("");
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -36,7 +38,7 @@ export function WebSocketView({
         <div className="flex items-center gap-2">
           <p className="text-xs font-medium">WebSocket</p>
           <Badge variant="secondary" className="font-mono uppercase">
-            {connected ? "Open" : "Closed"}
+            {connected ? "Open" : connecting ? "Connecting" : "Closed"}
           </Badge>
         </div>
         <Button variant="ghost" size="icon-sm" onClick={onClear} aria-label="Clear messages">

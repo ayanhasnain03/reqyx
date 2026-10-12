@@ -28,6 +28,10 @@
         "BETTER_AUTH_URL",
         "NEXT_PUBLIC_APP_URL"
       ]
+    },
+    "db:push": {
+      "cache": false,
+      "env": ["DATABASE_URL"]
     }
   }
 }

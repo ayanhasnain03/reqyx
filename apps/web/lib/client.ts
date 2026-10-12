@@ -254,12 +254,23 @@ export async function startSseSession(
   };
 }
 
-export function startWsSession(
+export async function startWsSession(
   url: string,
   preferred: Transport,
   onMessage: (message: WsMessage) => void,
-): { send: (data: string) => void; close: () => void; transport: Transport } {
-  if (preferred === "extension") {
+): Promise<{
+  send: (data: string) => boolean;
+  close: () => void;
+  transport: Transport;
+}> {
+  const extension = await detectExtension();
+  const local = isLocalHostUrl(url);
+  const useExtension =
+    (preferred === "extension" || local) &&
+    extension.installed &&
+    extension.connected;
+
+  if (useExtension) {
     const handle = connectWsViaExtension(url, onMessage);
     return {
       send: handle.send,
@@ -268,7 +279,23 @@ export function startWsSession(
     };
   }
 
-  const socket = new WebSocket(url);
+  let socket: WebSocket;
+  try {
+    socket = new WebSocket(url);
+  } catch (error) {
+    onMessage({
+      id: createId(),
+      direction: "system",
+      data: error instanceof Error ? error.message : "WebSocket failed",
+      at: Date.now(),
+    });
+    return {
+      transport: "browser",
+      send: () => false,
+      close: () => undefined,
+    };
+  }
+
   socket.addEventListener("open", () => {
     onMessage({
       id: createId(),
@@ -305,16 +332,17 @@ export function startWsSession(
   return {
     transport: "browser",
     send: (data: string) => {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(data);
-        onMessage({
-          id: createId(),
-          direction: "out",
-          data,
-          at: Date.now(),
-        });
+      if (socket.readyState !== WebSocket.OPEN) return false;
+      socket.send(data);
+      return true;
+    },
+    close: () => {
+      if (
+        socket.readyState === WebSocket.OPEN ||
+        socket.readyState === WebSocket.CONNECTING
+      ) {
+        socket.close();
       }
     },
-    close: () => socket.close(),
   };
 }

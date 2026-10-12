@@ -114,6 +114,7 @@ import {
 } from "@/lib/client";
 import {
   addItemToCollection,
+  collectRequestIds,
   createCollection,
   createFolder,
   createRequestRef,
@@ -205,6 +206,7 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
   const [sseError, setSseError] = useState<string | null>(null);
   const [wsMessages, setWsMessages] = useState<WsMessage[]>([]);
   const [wsConnected, setWsConnected] = useState(false);
+  const [wsConnecting, setWsConnecting] = useState(false);
   const loadedRequestIdRef = useRef<string | null>(null);
   const savedFingerprintRef = useRef<string>("");
   const saveRequestRef = useRef<() => Promise<RequestDraft | null>>(async () => null);
@@ -212,9 +214,11 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
   const abortRef = useRef<AbortController | null>(null);
   const sseStopRef = useRef<(() => void) | null>(null);
   const wsSessionRef = useRef<{
-    send: (data: string) => void;
+    send: (data: string) => boolean;
     close: () => void;
   } | null>(null);
+
+  type HistoryRow = RequestDraft & { statusCode: number | null };
 
   const historyQuery = useQuery(trpc.history.list.queryOptions());
   const settingsQuery = useQuery(trpc.settings.get.queryOptions());
@@ -227,15 +231,108 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
     retry: false,
   });
 
+  function toHistoryRow(
+    draftNext: RequestDraft,
+    statusCode: number | null = null,
+  ): HistoryRow {
+    return { ...draftNext, statusCode };
+  }
+
+  function patchHistoryCache(row: HistoryRow) {
+    queryClient.setQueryData<HistoryRow[]>(
+      trpc.history.list.queryKey(),
+      (current = []) => [row, ...current.filter((item) => item.id !== row.id)],
+    );
+    queryClient.setQueryData<HistoryRow>(
+      trpc.history.getById.queryKey({ id: row.id }),
+      row,
+    );
+    queryClient.setQueryData<Collection[]>(
+      trpc.collections.list.queryKey(),
+      (current = []) =>
+        current.map((collection) => {
+          if (!collection.requests.some((item) => item.id === row.id)) {
+            return collection;
+          }
+          return {
+            ...collection,
+            requests: [
+              createDraft(row),
+              ...collection.requests.filter((item) => item.id !== row.id),
+            ],
+          };
+        }),
+    );
+  }
+
+  function patchCollectionCache(collection: Collection) {
+    queryClient.setQueryData<Collection[]>(
+      trpc.collections.list.queryKey(),
+      (current = []) => [
+        collection,
+        ...current.filter((item) => item.id !== collection.id),
+      ],
+    );
+  }
+
+  function commitHistoryOptimistic(row: HistoryRow) {
+    const previousList = queryClient.getQueryData<HistoryRow[]>(
+      trpc.history.list.queryKey(),
+    );
+    const previousById = queryClient.getQueryData<HistoryRow>(
+      trpc.history.getById.queryKey({ id: row.id }),
+    );
+    const previousCollections = queryClient.getQueryData<Collection[]>(
+      trpc.collections.list.queryKey(),
+    );
+    void queryClient.cancelQueries(trpc.history.list.queryFilter());
+    void queryClient.cancelQueries(
+      trpc.history.getById.queryFilter({ id: row.id }),
+    );
+    patchHistoryCache(row);
+    return () => {
+      if (previousList) {
+        queryClient.setQueryData(trpc.history.list.queryKey(), previousList);
+      }
+      if (previousById) {
+        queryClient.setQueryData(
+          trpc.history.getById.queryKey({ id: row.id }),
+          previousById,
+        );
+      } else {
+        queryClient.removeQueries(
+          trpc.history.getById.queryFilter({ id: row.id }),
+        );
+      }
+      if (previousCollections) {
+        queryClient.setQueryData(
+          trpc.collections.list.queryKey(),
+          previousCollections,
+        );
+      }
+    };
+  }
+
+  function commitCollectionOptimistic(collection: Collection) {
+    const previous = queryClient.getQueryData<Collection[]>(
+      trpc.collections.list.queryKey(),
+    );
+    void queryClient.cancelQueries(trpc.collections.list.queryFilter());
+    patchCollectionCache(collection);
+    return () => {
+      if (previous) {
+        queryClient.setQueryData(trpc.collections.list.queryKey(), previous);
+      }
+    };
+  }
+
   const upsertMutation = useMutation(
     trpc.history.upsert.mutationOptions({
-      onSuccess: async () => {
+      onSettled: async (_data, _error, input) => {
         await queryClient.invalidateQueries(trpc.history.list.queryFilter());
-        if (!isNew) {
-          await queryClient.invalidateQueries(
-            trpc.history.getById.queryFilter({ id: requestId }),
-          );
-        }
+        await queryClient.invalidateQueries(
+          trpc.history.getById.queryFilter({ id: input.id }),
+        );
       },
     }),
   );
@@ -285,15 +382,30 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
         const previous = queryClient.getQueryData<Collection[]>(
           trpc.collections.list.queryKey(),
         );
+        const historyRows =
+          queryClient.getQueryData<HistoryRow[]>(trpc.history.list.queryKey()) ??
+          [];
         queryClient.setQueryData<Collection[]>(
           trpc.collections.list.queryKey(),
           (current = []) => {
+            const existing = current.find((item) => item.id === input.id);
+            const byId = new Map<string, RequestDraft>();
+            for (const request of existing?.requests ?? []) {
+              byId.set(request.id, request);
+            }
+            for (const row of historyRows) {
+              byId.set(row.id, createDraft(row));
+            }
+            const requests = collectRequestIds(
+              input.items as Collection["items"],
+            )
+              .map((id) => byId.get(id))
+              .filter((item): item is RequestDraft => !!item);
             const optimistic: Collection = {
               id: input.id,
               name: input.name,
               items: input.items as Collection["items"],
-              requests:
-                current.find((item) => item.id === input.id)?.requests ?? [],
+              requests,
               updatedAt: input.updatedAt,
             };
             const without = current.filter((item) => item.id !== input.id);
@@ -455,9 +567,11 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
     setWsMessages([]);
     setSseConnected(false);
     setWsConnected(false);
+    setWsConnecting(false);
     setSseError(null);
     sseStopRef.current?.();
     wsSessionRef.current?.close();
+    wsSessionRef.current = null;
   }
 
   const history = historyQuery.data ?? [];
@@ -532,14 +646,14 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
     return saved;
   }
 
-  async function persistHistory(saved: RequestDraft, statusCode: number | null) {
+  function persistHistory(saved: RequestDraft, statusCode: number | null) {
     if (!settings.autoSaveHistory) return;
-    try {
-      await upsertMutation.mutateAsync({ ...saved, statusCode });
-      markClean(saved);
-    } catch {
+    markClean(saved);
+    const rollback = commitHistoryOptimistic(toHistoryRow(saved, statusCode));
+    void upsertMutation.mutateAsync({ ...saved, statusCode }).catch(() => {
+      rollback();
       toast.error("Could not save request");
-    }
+    });
   }
 
   function persistCollection(collection: {
@@ -564,16 +678,17 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
       name: draft.name || draft.url || "Untitled",
     });
 
-    try {
-      await upsertMutation.mutateAsync({ ...saved, statusCode: null });
-      setDraft(saved);
-      markClean(saved);
-      if (!options?.silent) toast.success("Saved");
-      return saved;
-    } catch {
+    setDraft(saved);
+    markClean(saved);
+    const rollback = commitHistoryOptimistic(toHistoryRow(saved, null));
+    if (!options?.silent) toast.success("Saved");
+
+    void upsertMutation.mutateAsync({ ...saved, statusCode: null }).catch(() => {
+      rollback();
+      setIsDirty(true);
       toast.error("Could not save request");
-      return null;
-    }
+    });
+    return saved;
   }
 
   async function saveCurrentToCollection(
@@ -596,17 +711,15 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
       parentFolderId,
     )[0]!;
 
-    try {
-      await persistCollection(updated);
-      toast.success(`Saved to ${target.name}`);
-    } catch {
-      toast.error("Could not save to collection");
-    }
+    commitCollectionOptimistic(updated);
+    void persistCollection(updated).catch(() => undefined);
+    toast.success(`Saved to ${target.name}`);
   }
 
   async function handleCreateCollection(name: string) {
     const collection = createCollection(name);
     setSidebarTab("collections");
+    commitCollectionOptimistic(collection);
     void persistCollection(collection);
     toast.success(`Created ${name}`);
   }
@@ -614,11 +727,9 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
   async function handleRenameCollection(id: string, name: string) {
     const target = collections.find((item) => item.id === id);
     if (!target) return;
-    void persistCollection({
-      ...target,
-      name,
-      updatedAt: Date.now(),
-    });
+    const updated = { ...target, name, updatedAt: Date.now() };
+    commitCollectionOptimistic(updated);
+    void persistCollection(updated);
   }
 
   async function handleDeleteCollection(id: string) {
@@ -638,6 +749,7 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
       parentFolderId,
       createFolder(name),
     );
+    commitCollectionOptimistic(updated);
     void persistCollection(updated);
   }
 
@@ -648,21 +760,25 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
   ) {
     const target = collections.find((item) => item.id === collectionId);
     if (!target) return;
-    void persistCollection({
+    const updated = {
       ...target,
       items: renameCollectionItem(target.items, folderId, name),
       updatedAt: Date.now(),
-    });
+    };
+    commitCollectionOptimistic(updated);
+    void persistCollection(updated);
   }
 
   async function handleDeleteFolder(collectionId: string, folderId: string) {
     const target = collections.find((item) => item.id === collectionId);
     if (!target) return;
-    void persistCollection({
+    const updated = {
       ...target,
       items: removeCollectionItem(target.items, folderId),
       updatedAt: Date.now(),
-    });
+    };
+    commitCollectionOptimistic(updated);
+    void persistCollection(updated);
   }
 
   async function handleCreateRequest(
@@ -679,13 +795,6 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
       name,
     });
 
-    try {
-      await upsertMutation.mutateAsync({ ...draftNext, statusCode: null });
-    } catch {
-      toast.error("Could not create request");
-      return;
-    }
-
     const updated = addItemToCollection(
       {
         ...target,
@@ -695,13 +804,26 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
       createRequestRef(draftNext.id),
     );
 
-    try {
-      await persistCollection(updated);
-      router.push(`/r/${draftNext.id}`);
-      toast.success("Request created");
-    } catch {
-      toast.error("Could not add request to collection");
-    }
+    const rollbackHistory = commitHistoryOptimistic(
+      toHistoryRow(draftNext, null),
+    );
+    const rollbackCollection = commitCollectionOptimistic(updated);
+    loadedRequestIdRef.current = draftNext.id;
+    setDraft(draftNext);
+    markClean(draftNext);
+    router.push(`/r/${draftNext.id}`);
+    toast.success("Request created");
+
+    void (async () => {
+      try {
+        await upsertMutation.mutateAsync({ ...draftNext, statusCode: null });
+        await persistCollection(updated);
+      } catch {
+        rollbackHistory();
+        rollbackCollection();
+        toast.error("Could not create request");
+      }
+    })();
   }
 
   async function handleRenameRequest(requestId: string, name: string) {
@@ -714,19 +836,27 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
       if (draft.id === requestId) {
         patch({ name });
         const saved = await ensureRequestId({ ...draft, name });
-        await upsertMutation.mutateAsync({ ...saved, statusCode: null });
         setDraft(saved);
         markClean(saved);
+        const rollback = commitHistoryOptimistic(toHistoryRow(saved, null));
+        void upsertMutation.mutateAsync({ ...saved, statusCode: null }).catch(() => {
+          rollback();
+          toast.error("Could not rename request");
+        });
       }
       return;
     }
 
     const next = { ...createDraft(source), name, updatedAt: Date.now() };
-    await upsertMutation.mutateAsync({ ...next, statusCode: null });
+    const rollback = commitHistoryOptimistic(toHistoryRow(next, null));
     if (draft.id === requestId) {
       setDraft(next);
       markClean(next);
     }
+    void upsertMutation.mutateAsync({ ...next, statusCode: null }).catch(() => {
+      rollback();
+      toast.error("Could not rename request");
+    });
   }
 
   async function handleDeleteRequest(
@@ -736,11 +866,13 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
   ) {
     const target = collections.find((item) => item.id === collectionId);
     if (!target) return;
-    await persistCollection({
+    const updated = {
       ...target,
       items: removeCollectionItem(target.items, itemId),
       updatedAt: Date.now(),
-    });
+    };
+    commitCollectionOptimistic(updated);
+    void persistCollection(updated);
   }
 
   async function onSendHttp() {
@@ -840,29 +972,34 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
   }
 
   async function onToggleWs() {
-    if (wsConnected) {
+    if (wsConnected || wsConnecting) {
       wsSessionRef.current?.close();
       wsSessionRef.current = null;
       setWsConnected(false);
+      setWsConnecting(false);
       return;
     }
 
-    const session = startWsSession(
+    setWsConnecting(true);
+    setWsConnected(false);
+
+    const session = await startWsSession(
       executePayload.url.replace(/^http/i, "ws"),
       transport,
       (message) => {
         setWsMessages((items) => [...items, message].slice(-200));
-        if (message.direction === "system" && message.data === "Connected") {
+        if (message.direction !== "system") return;
+        if (message.data === "Connected") {
           setWsConnected(true);
+          setWsConnecting(false);
+          return;
         }
-        if (message.direction === "system" && message.data === "Disconnected") {
-          setWsConnected(false);
-        }
+        setWsConnected(false);
+        setWsConnecting(false);
       },
     );
     wsSessionRef.current = session;
     setTransport(session.transport);
-    setWsConnected(true);
 
     if (settings.autoSaveHistory) {
       const saved = await ensureRequestId({
@@ -936,7 +1073,7 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
         ? "Stop"
         : "Listen"
       : draft.kind === "websocket"
-        ? wsConnected
+        ? wsConnected || wsConnecting
           ? "Disconnect"
           : "Connect"
         : loading
@@ -1244,6 +1381,7 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
                     >
                       <button
                         type="button"
+                        className="cursor-pointer"
                         onClick={() => openRequest(item.id)}
                         onContextMenu={(event) => {
                           event.preventDefault();
@@ -1330,7 +1468,6 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
                   <TooltipTrigger asChild>
                     <Button
                       size="sm"
-                      disabled={upsertMutation.isPending}
                       onClick={() => void saveRequest()}
                       className={cn(
                         "min-w-20 gap-1.5 transition-all",
@@ -1339,18 +1476,12 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
                           : "border border-border/80 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
                       )}
                     >
-                      {upsertMutation.isPending ? (
-                        <Spinner data-icon="inline-start" />
-                      ) : isDirty ? (
+                      {isDirty ? (
                         <SaveIcon data-icon="inline-start" />
                       ) : (
                         <CheckIcon data-icon="inline-start" />
                       )}
-                      {upsertMutation.isPending
-                        ? "Saving"
-                        : isDirty
-                          ? "Save"
-                          : "Saved"}
+                      {isDirty ? "Save" : "Saved"}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent className="flex items-center gap-2">
@@ -1683,9 +1814,22 @@ export function Workspace({ requestId, initialKind }: WorkspaceProps) {
                       <WebSocketView
                         messages={wsMessages}
                         connected={wsConnected}
+                        connecting={wsConnecting}
                         onClear={() => setWsMessages([])}
                         onSend={(data) => {
-                          wsSessionRef.current?.send(data);
+                          const sent = wsSessionRef.current?.send(data) ?? false;
+                          if (!sent) {
+                            setWsMessages((items) => [
+                              ...items,
+                              {
+                                id: createId(),
+                                direction: "system",
+                                data: "Not connected",
+                                at: Date.now(),
+                              },
+                            ]);
+                            return;
+                          }
                           setWsMessages((items) => [
                             ...items,
                             {
